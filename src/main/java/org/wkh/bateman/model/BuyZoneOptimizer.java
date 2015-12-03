@@ -27,89 +27,139 @@ import org.wkh.bateman.trade.TimeSeries;
  * Everything else in the project basically builds up to this. How exciting!
  *  
  */
-public class BuyZoneOptimizer {
+public class BuyZoneOptimizer
+{
     private static Logger logger = LoggerFactory.getLogger(SimpleParticleSwarmOptimizer.class.getName());
     
+    /**
+     * <一句话功能简述> <功能详细描述>
+     * 
+     * @param series 历史的日K数据
+     * @param symbol 号码
+     * @param days 详细数据周期
+     * @param commissions 每笔佣金
+     * @param slippage 波动，延误
+     * @param initialBalance 初始金额
+     * @param allocation 账号分配75%
+     * @param minBuy 最小买入
+     * @param minSell 最小卖出
+     * @param minStop
+     * @param maxBuy
+     * @param maxSell
+     * @param maxStop
+     * @param generations 世代？
+     * @return
+     * @throws Exception [参数说明]
+     *             
+     * @return double[] [返回类型说明]
+     * @exception throws [违例类型] [违例说明]
+     * @see [类、类#方法、类#成员]
+     */
     public static double[] optimizeTriggers(final TimeSeries series, final String symbol, final int days,
-            double commissions, final double slippage, final int initialBalance, final double allocation,
-            final double minBuy, final double minSell, final double minStop, final double maxBuy,
-            final double maxSell, final double maxStop, final int generations) throws Exception {
-
+        double commissions, final double slippage, final int initialBalance, final double allocation,
+        final double minBuy, final double minSell, final double minStop, final double maxBuy, final double maxSell,
+        final double maxStop, final int generations)
+            throws Exception
+    {
+        
         final Asset asset = new Asset(symbol, series);
-
+        
         final Conditions conditions = new Conditions(new BigDecimal(commissions), new BigDecimal(slippage));
-
+        
         final MoneyManagementStrategy moneyManager = new FixedPercentageAllocationStrategy(allocation, asset);
-
-        FitnessFunction fitness = new FitnessFunction() {
-            public double evaluate(double[] x) {
+        
+        // 适应函数
+        FitnessFunction fitness = new FitnessFunction()
+        {
+            public double evaluate(double[] x)
+            {
                 double buyTrigger = x[0];
                 double sellTrigger = x[1];
                 double stopLoss = x[2];
-
-                try {
+                
+                try
+                {
                     Account account = new Account(new BigDecimal(initialBalance), DateTime.now().minusDays(days));
-
-                    BuyZoneModel model = new BuyZoneModel(account, asset, conditions, moneyManager, buyTrigger, sellTrigger, stopLoss);
-
+                    
+                    BuyZoneModel model = new BuyZoneModel(account, asset, conditions, moneyManager, buyTrigger,
+                        sellTrigger, stopLoss);
+                        
                     Session tradingSession = model.generateSignals(asset.getTimeSeries().beginningOfSeries(),
-                            asset.getTimeSeries().lastOfSeries());
-
-                    //return -tradingSession.grossProfit().doubleValue();
+                        asset.getTimeSeries().lastOfSeries());
+                        
+                    // return -tradingSession.grossProfit().doubleValue();
                     return -tradingSession.sharpeRatio();
-                } catch (Exception ex) {
+                }
+                catch (Exception ex)
+                {
                     ex.printStackTrace();
-
+                    
                     return Double.MAX_VALUE;
                 }
             }
         };
-
-        double[] xmin = new double[]{minBuy, minSell, 0.0};
-        double[] xmax = new double[]{maxBuy, maxSell, maxStop};
-
+        
+        double[] xmin = new double[] {minBuy, minSell, 0.0};
+        double[] xmax = new double[] {maxBuy, maxSell, maxStop};
+        
         SimpleParticleSwarmOptimizer optimizer = new SimpleParticleSwarmOptimizer(fitness, xmin, xmax, generations);
-
+        
         return optimizer.learn();
     }
-
-    public static double getMedianHighOpenSpread(String symbol, int days) throws Exception {
+    
+    public static double getMedianHighOpenSpread(String symbol, int days)
+        throws Exception
+    {
         YahooQuoteFetcher yahooFetcher = new YahooQuoteFetcher();
-        String quoteStr = yahooFetcher.fetchQuotes(symbol, days, 60*60*24);
-        List<Quote> dailyQuoteList = yahooFetcher.parseQuotes(quoteStr, 60*60*24);
+        String quoteStr = yahooFetcher.fetchQuotes(symbol, days, 60 * 60 * 24);
+        List<Quote> dailyQuoteList = yahooFetcher.parseQuotes(quoteStr, 60 * 60 * 24);
         
         DescriptiveStatistics stats = new DescriptiveStatistics();
         
-        for(Quote quote : dailyQuoteList) {
+        // 将列表所有天的，最高价-开盘价
+        for (Quote quote : dailyQuoteList)
+        {
             stats.addValue(quote.getHigh().subtract(quote.getOpen()).doubleValue());
         }
-        
+        // 取一半的值
         return stats.getPercentile(50);
     }
     
-    public static void main(String[] args) throws Exception {
-
+    public static void main(String[] args)
+        throws Exception
+    {
+        
         int days = 30;
-        String symbol = args.length > 0 ? args[0] : "AAPL"; // default to AAPL if nothing provided
+        String symbol = "300027.sz";
         
         logger.info("Fetching data for symbol " + symbol);
         
         double yearlyMedianDailyIncrease = getMedianHighOpenSpread(symbol, 365);
         
+        logger.info("yearlyMedianDailyIncrease:" + yearlyMedianDailyIncrease);
+        
         GoogleQuoteFetcher fetcher = new GoogleQuoteFetcher();
-
-        TimeSeries series = fetcher.fetchAndParse(symbol, days, 60); // one minute
+        
+        // 一年的时间和开盘的序列
+        TimeSeries series = fetcher.fetchAndParse(symbol, days, 60);
+        
+        // 第一天开盘价
         BigDecimal firstPrice = series.getPrices().firstEntry().getValue();
+        logger.info("firstPrice :" + firstPrice);
+        // BigDecimal lastBidAskSpread = new YahooQuoteFetcher().fetchBidAskSpread(symbol);
         
-        BigDecimal lastBidAskSpread = new YahooQuoteFetcher().fetchBidAskSpread(symbol);
+        // allow buying at open price
+        final double minBuy = 0;
         
-        final double minBuy = 0; // allow buying at open price
-        final double minSell = firstPrice.multiply(new BigDecimal("0.002")).doubleValue(); // 0.2% of first price to sell (which is hopefully on the order of twice the bid-ask spread)
+        // 0.2% of first price to sell
+        // (which is hopefully on the order of twice the bid-ask spread)
+        final double minSell = firstPrice.multiply(new BigDecimal("0.002")).doubleValue();
+        
         final double minStop = minSell;
         final double maxBuy = yearlyMedianDailyIncrease;
         final double maxSell = yearlyMedianDailyIncrease;
         final double maxStop = yearlyMedianDailyIncrease;
-
+        
         logger.info("Minimum buy:" + minBuy);
         logger.info("Minimum sell: " + minSell);
         logger.info("Minimum stop: " + minStop);
@@ -118,40 +168,52 @@ public class BuyZoneOptimizer {
         logger.info("Max stop: " + maxStop);
         
         final double commission = 10.0; // $10.00 a trade
-        final double slippage = 1.0E-3; // 0.1% mean slippage on each side of a trade, which should also account for bid-ask spread
+        
+        final double slippage = 1.0E-3; // 0.1% mean slippage on each side of a trade, which should also account for
+                                        // bid-ask spread
+        
         final int initialBalance = 100000; // $100,000 to start with
         final double accountAllocation = 0.75; // risk 75% of capital
         final int generations = 100; // generations to train for
-
+        
         DateTime today = DateTime.now();
-
-
-        double[] bestOffsets = optimizeTriggers(series, symbol, days, commission,
-                slippage, initialBalance, accountAllocation, minBuy,
-                minSell, minStop, maxBuy, maxSell, maxStop, generations);
-
+        
+        double[] bestOffsets = optimizeTriggers(series,
+            symbol,
+            days,
+            commission,
+            slippage,
+            initialBalance,
+            accountAllocation,
+            minBuy,
+            minSell,
+            minStop,
+            maxBuy,
+            maxSell,
+            maxStop,
+            generations);
+            
         double buyTrigger = bestOffsets[0];
         double sellTrigger = bestOffsets[1];
         double stopLoss = bestOffsets[2];
-
+        
         System.out.println("\n\nBuy trigger: " + buyTrigger);
         System.out.println("Sell trigger: " + sellTrigger);
         System.out.println("Stop loss: " + stopLoss);
-
+        
         Asset asset = new Asset(symbol, series);
-
+        
         Account account = new Account(new BigDecimal(initialBalance), today.minusDays(days));
-
+        
         Conditions conditions = new Conditions(new BigDecimal(commission), new BigDecimal(slippage));
         MoneyManagementStrategy moneyManager = new FixedPercentageAllocationStrategy(accountAllocation, asset);
-
-        BuyZoneModel instance = new BuyZoneModel(account, asset, conditions,
-                moneyManager, buyTrigger, sellTrigger, stopLoss);
-
+        
+        BuyZoneModel instance = new BuyZoneModel(account, asset, conditions, moneyManager, buyTrigger, sellTrigger,
+            stopLoss);
+            
         Session session = instance.generateSignals(series.beginningOfSeries(), series.lastOfSeries());
-
+         
         session.dumpTo(".", symbol);
-
-
+        
     }
 }
